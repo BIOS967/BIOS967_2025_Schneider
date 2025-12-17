@@ -1,0 +1,243 @@
+---
+title: "BIOS967 Final Project"
+author: "Alora Schneider"
+date: "2025-12-17"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE, results = "hide", message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(repos = c(CRAN = "http://cran.rstudio.com/"))
+packages <- c("ggplot2", "geodata", "terra", "ggpubr", "sf", "readr")
+installed <- packages %in% rownames(installed.packages())
+if (any(!installed)) {
+  install.packages(packages[!installed])
+}
+library(geodata)
+library(terra)
+library(ggplot2)
+library(ggpubr)
+library(sf)
+library(readr)
+```
+
+## Introduction
+
+  Tuco-tucos are a diverse group of approximately 60 species of South American fossorial rodent in the genus *Ctenomys*(Gardner et al. 2014). Tucos are generally solitary and spend most of their lives in burrows (Lacey et al. 2022). Hence, their abundance, behavior, and certain aspects of morphology are affected by soil type (Gardner et al. 2021; Vassalo 2006). Tucos tend to use their forefeet and incisors to break up soil and their hindfeet to excavate that soil out of the burrow. Tuco species will use their incisors more often in more dense, clayey soils (Vassalo 2006). Specific species that occupy distinct soil types (i.e., *C. talarum*, *C. australis*) tend to have longer forefeet in clayey soils. 
+
+#### Question: What is the relationship between hindfoot length and certain soil type variables (i.e., clay, sand, silt, organic carbon content, and bulk density) for *Ctenomys*? 
+##### Objectives: 
+##### 1.  Collect soil data for specimen collection localities in Bolivia using R package. 
+##### 2.  Conduct linear regressions on soil variables and hindfoot length and produce scatterplot figures. 
+##### 3.  Produce map figure displaying at least one soil variable spatially in relation to average hindfoot length. 
+
+I hypothesize that hind feet will be longer in soils with high bulk density and clay content, and shorter in soils with high sand and silt content. 
+
+## Data Collection
+Install and load necessary packages: 
+- geodata: global soils data 
+- terra: working with SpatRaster data formats
+- readr: downloading csv files
+- ggplot2, ggpubr, sf: plotting
+
+```{r data, message = FALSE, warning = FALSE}
+dataset = utils::read.csv("tuco_tuco_soils.csv")
+#Load in incomplete data set with latitudes/longitudes for each specimen collection location
+#truncate into lat_long data frame
+lat_long = dataset[, 5:6]
+
+#transform into a point spatial vector so extract() knows what to do with it 
+lat_long <- terra::vect(lat_long, geom = c("lon", "lat"), crs = "epsg:4326", keepgeom=FALSE)
+
+#extract spatial rasters with each of five soil variables at 30cm depth across entire globe
+bulk_density = geodata::soil_world(var = "bdod", depth = 30, stat = "mean", VSI = TRUE)
+#extract soil data values from specific lattitudes and longitudes 
+bulk_density_df = terra::extract(bulk_density, lat_long)
+#repeat for remaining 4 variables 
+clay = geodata::soil_world(var = "clay", depth = 30, stat = "mean")
+clay_df = terra::extract(clay, lat_long)
+sand = geodata::soil_world(var = "sand", depth = 30, stat = "mean")
+sand_df = terra::extract(sand, lat_long)
+silt = geodata::soil_world(var = "silt", depth = 30, stat = "mean")
+silt_df = terra::extract(silt, lat_long)
+soil_org_carbon = geodata::soil_world(var = "soc", depth = 30, stat = "mean")
+soc_df = terra::extract(org_carb_stock, lat_long)
+
+#add soil variables into columns from initial dataset
+dataset$Bulk_soil_density = bulk_density_df[, 2]
+dataset$Sand_content = sand_df[, 2]
+dataset$Clay_content = clay_df[, 2]
+dataset$Silt_content = silt_df[, 2]
+dataset$Organic_content = soc_df[, 2]
+
+#load in incomplete dataset of individual specimen data 
+tuco_data = read.csv("BIOS967_FINAL_DATASET.csv")
+tuco_data = tuco_data[, 1:6]
+#merge specimen data and lat-long soil data 
+data = merge(dataset, tuco_data)
+#remove row that didn't work (NA value)
+data = na.omit(data)
+data = data[, c(1, 5:16)]
+#Write complete dataset as csv and save to files
+write.csv(data, file = "BIOS967_COMPLETE_DATA.csv")
+```
+
+## Linear Regression Statistics 
+Made linear models for each variable and checked statistics
+```{r linear, message = FALSE, warning = FALSE}
+##BULK DENSITY VS HFL
+bd_vs_hfl = lm(Bulk_soil_density~Hind_foot_length, data = data)
+summary(bd_vs_hfl)
+#slope 0.003658, p value <0.001, R-squared = 0.07784 
+#slight positive statistically significant relationship
+
+##CLAY VS HFL
+c_vs_hfl = lm(Clay_content~Hind_foot_length, data = data)
+summary(c_vs_hfl)
+#slope -0.36341, p value <0.001, R-squared = 0.2047
+#slight negative statistically significant relationship
+
+##SAND VS HFL
+sa_vs_hfl = lm(Sand_content~Hind_foot_length, data = data)
+summary(sa_vs_hfl)
+#slope 0.44242, p value <0.001, R-squared = 0.1397
+#positive statistically significant relationship
+
+#SILT VS HFL
+si_vs_hfl = lm(Silt_content~Hind_foot_length, data = data)
+summary(si_vs_hfl)
+#slope -0.07291, p value 0.1311, R-squared = 0.00398
+#slightly negative insignificant relationship
+
+#ORGANIC CARBON VS HFL
+oc_vs_hfl = lm(Organic_content~Hind_foot_length, data = data)
+summary(oc_vs_hfl)
+#slope -0.17974, p value <0.001, R-squared = 0.05174
+#slightly negative statistically significant relationship 
+
+```
+
+## Linear Regression Figures
+Made figure objects for each with scatterplot, trendline and statistics. Then combined into single figure using ggpubr
+```{r fig1, message = FALSE, warning = FALSE}
+##Fig 1 - Bulk density vs. HFL
+bd_stat = paste0("P-value < 0.001, ", " ", 
+                 "R-squared = 0.07784")
+fig1 = ggplot(data = data, mapping = aes(y = Hind_foot_length, x = Bulk_soil_density)) + 
+  geom_point() + 
+  geom_smooth(method="lm", se = FALSE, color = "tomato") + 
+  xlab("Bulk Soil Density (g/cm^2)") + 
+  ylab("Hind Foot Length (mm)") + 
+  theme_classic() + 
+  ggtitle("Bulk Soil Density vs. HFL") + 
+  annotate("text", x = 1.1, y = 58, 
+           label = bd_stat, hjust = 0, vjust = 1, size = 3)
+print(fig1)
+
+##Fig 2 - Clay content vs. HFL
+cl_stat = paste0("P-value < 0.001,", " ", 
+                 "R-squared = 0.2047")
+fig2 = ggplot(data = data, mapping = aes(y = Hind_foot_length, x = Clay_content)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "tomato") + 
+  xlab("Clay Content (%) ") + 
+  ylab("Hind Foot Length (mm)") + 
+  theme_classic()+ 
+  theme_classic() + 
+  ggtitle("Clay Content vs. HFL") + 
+  annotate("text", x = 22, y = 58, 
+           label = cl_stat, hjust = 0, vjust = 1, size = 3)
+print(fig2)
+
+##Fig 3 - Sand content vs. HFL 
+sd_stats = paste0("P-value < 0.001", " ", 
+                  "R-squared = 0.1397")
+fig3 = ggplot(data = data, mapping = aes(y = Hind_foot_length, x = Sand_content)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "tomato") + 
+  xlab("Sand content (%) ") + 
+  ylab("Hind Foot Length (mm)") + 
+  theme_classic()+ 
+  ggtitle("Sand Content vs. HFL") + 
+  annotate("text", x = 30, y = 58, 
+           label = sd_stats, hjust = 0, vjust = 1, size = 3)
+print(fig3)
+
+##Fig 4 - Silt content vs. HFL
+si_stat = paste0("P-value = 0.1311", " ",
+                  "R-squared = 0.00398")
+fig4 = ggplot(data = data, mapping = aes(y = Hind_foot_length, x = Silt_content)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "tomato") +
+  xlab("Silt Content (%) ") + 
+  ylab("Hind Foot Length (mm)") + 
+  theme_classic()+
+  ggtitle("Silt Content vs. HFL") + 
+  annotate("text", x = 15, y = 58, 
+           label = si_stat, hjust = 0, vjust = 1, size = 3)
+print(fig4)
+
+##Fig 5 - Organic carbon content vs. HFL
+oc_stat = paste0("P-value < 0.001, ", " ",
+                 "R-squared = 0.05174")
+fig5 = ggplot(data = data, mapping = aes(y = Hind_foot_length, x = Organic_content)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "tomato") + 
+  xlab("Organic Carbon Content (%)") +
+  ylab("Hind Foot Length (mm)") + 
+  theme_classic() + 
+  ggtitle("Organic Carbon Content vs. HFL") + 
+  annotate("text", x = 8, y = 58, 
+           label = oc_stat, hjust = 0, vjust = 1, size = 3)
+print(fig5)
+
+figure = ggpubr::ggarrange(fig1, fig2, fig3, fig4, fig5, ncol = 3, nrow = 2)
+#save completed figure
+ggsave("bios967_fig1.png", width = 10, height = 10)
+print(figure)
+```
+
+## Mapping
+Since clay was the most significant statistically, I decided to use that variable to create a map showing HFL and soil type spatially. 
+```{r mapping, message = FALSE, warning = FALSE}
+##Fig 6 - Clay content figure 
+#bin the hind foot lengths by average over one location, merge with original dataset
+average_by_latlong = aggregate(Hind_foot_length~lat, data = data, FUN = mean)
+colnames(average_by_latlong)[2] = "av_HFL"
+data_av = merge(data, average_by_latlong)
+
+#load in bolivia shape file
+bolivia = st_read("bo.shp")
+
+#create plot 
+map = ggplot(data = bolivia) +
+  geom_sf(col = "black") + 
+  geom_point(data = data_av, mapping = aes(x = lon, y = lat, size = av_HFL, colour = Clay_content)) +
+  scale_color_binned(palette = c("darkblue", "slateblue","orange2","tomato")) +
+  theme_classic(base_size = 12) +
+  ggtitle("Average HFL vs. Clay Content") + 
+  xlab("Lattitude") + 
+  ylab("Longitude") + 
+  labs(color = "Clay Content (%)", size = "Average Hind Foot Length (mm)")
+#save plot
+ggsave("clay_content_map.png", width = 8, height = 7)
+print(map)
+```
+
+## Discussion 
+  My hypothesis was almost exactly incorrect, with *Ctenomys* hindfeet tending to be shorter in clayey soils and longer in sandy soils. There was also a slight negative relationship with bulk density. However, none of the soil variables explained more than 25% of variation in hindfoot length. I expect that more involved in this process are the comb-like structures composed of stiff hair bristles which protrude perpendicular to the claws on the hind-feet (Justo et al. 2003; Rosi et al. 2005). Soil type might also be more strongly correlated with incisor procumbency, which would be interesting to examine in the future.
+  
+## References 
+Gardner, S.L. 1991. Phyletic coevolution between subterranean rodents of the genus Ctenomys (Rodentia: Hystricognathi) and nematodes of the genus Paraspidodera (Heterakoidea: Aspidoderidae) in the Neotropics: Temporal and evolutionary implications. Zoological Journal of the Linnean Society of London 102: 169-201.
+Gardner, S.L., Salazar-Bravo, J., & Cook, J.A. (2014). New species of Ctenomys Blainville 1826 (Rodentia: Ctenomyidae) from the lowlands and central valleys of Bolivia. Special Publication, Museum of Texas Tech University 62: 1-34.
+Gardner, S. L., Botero-Cañola, S., Aliaga-Rossel, E., Dursahinhan, A.T., & Salazar-Bravo, J. (2021). Conservation status and natural history of Ctenomys, tuco-tucos in Bolivia. Therya, 12(1), 15-36.
+Hengl, T., Mendes de Jesus, J., Heuvelink, G.B., Ruiperez Gonzalez, M., Kilibarda, M., Blagotić, A., ... & Kempen, B. (2017). SoilGrids250m: Global gridded soil information based on machine learning. PLoS one, 12(2), e0169748.
+Hollister, J. (2017). Elevatr: Access elevation data from various APIs. CRAN: Contributed Packages. The R Foundation. 
+Justo, E.R., De Santis, L. J., & Kin, M. S. (2003). Ctenomys talarum. Mammalian species, 730, 1-5.
+Lacey, E. A., Amaya, J. P., Irian, C. G., Carrizo, P. G., O’Brien, S. L., & Ojeda, A. A. (2022). Variable social organization among tuco-tucos (genus Ctenomys) in the opimus clade. Journal of Mammalogy, 103(4), 979-992.
+Poggio L., de Sousa L.M., Batjes N.H., Heuvelink G.B.M., Kempen B., Ribeiro E., Rossiter D. (2021) SoilGrids 2.0: producing soil information for the globe with quantified spatial uncertainty. Soil, 7: 217-240, 2021. doi:10.5194/soil-7-217-2021
+Rosi, M. I., Cona, M. I., Videla, F., Puig, S., Monge, S. A., & Roig, V. G. (2003). Diet selection by the fossorial rodent Ctenomys mendocinus inhabiting an environment with low food availability (Mendoza, Argentina). Studies on Neotropical Fauna and Environment, 38(3), 159-166.
+Rosi, M.I., Cona, M.I., Roig, V.G., Massarini, A.I., & Verzi, D.H. (2005). Ctenomys mendocinus. Mammalian Species, 777, 1-6.
+Vassallo, A.I. (1998). Functional morphology, comparative behaviour, and adaptation in two sympatric subterranean rodents genus Ctenomys (Caviomorpha: Octodontidae). Journal of Zoology, 244(3), 415-427.
+
+![Thank you!](images/tuco.webp)
